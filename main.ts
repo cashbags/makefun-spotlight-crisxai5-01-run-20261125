@@ -6,8 +6,11 @@
 // one make.fun play code, and 3-5 hashtags. Places go by the post's public
 // engagement after the deadline: score = likes + reposts + quotes.
 //
-// What this program does: it copies POST.json from the repository root to
-// /output/POST.json, where the gate reads it. That is all it has to do.
+// What this program does: it reads POST.json from the repository root,
+// checks it names a real X post (https://x.com/<handle>/status/<digits>),
+// and copies it byte-for-byte to /output/POST.json, where the gate reads
+// it. A placeholder or malformed POST.json fails loudly instead of being
+// handed in as if it were a post. That is all it has to do.
 // Nothing this program writes about the post is scored; the house reads the
 // post itself through FxTwitter.
 //
@@ -35,16 +38,37 @@
 // stand in for /bot and /output:
 //   mkdir -p out && MAKEFUN_BOT_DIR=. MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const BOT_DIR = process.env.MAKEFUN_BOT_DIR ?? '/bot';
 const OUTPUT_DIR = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
+// A real post address: https://x.com/<handle>/status/<digits>. The kit
+// starter ships POST.json with literal template tokens (<handle>, <id>)
+// instead; that placeholder is not a post and must never reach the gate.
+const POST_URL = /^https:\/\/x\.com\/[^/\s<>]+\/status\/\d+$/;
+
 mkdirSync(OUTPUT_DIR, { recursive: true });
+let raw: string;
 try {
-  copyFileSync(join(BOT_DIR, 'POST.json'), join(OUTPUT_DIR, 'POST.json'));
+  raw = readFileSync(join(BOT_DIR, 'POST.json'), 'utf8');
 } catch (err) {
-  console.error(`POST.json could not be copied from ${BOT_DIR}: ${(err as Error).message}`);
+  console.error(`POST.json could not be read from ${BOT_DIR}: ${(err as Error).message}`);
   process.exit(1);
 }
+let post: unknown;
+try {
+  post = JSON.parse(raw);
+} catch (err) {
+  console.error(`POST.json is not valid JSON: ${(err as Error).message}`);
+  process.exit(1);
+}
+const url = (post as { url?: unknown } | null)?.url;
+if (typeof url !== 'string' || !POST_URL.test(url)) {
+  console.error('POST.json does not name a real X post yet: expected {"url": "https://x.com/<handle>/status/<digits>"}. It still holds the kit placeholder tokens, so there is no post to hand in — post on X first, then replace POST.json with the real URL and re-run.');
+  process.exit(1);
+}
+const id = url.slice(url.lastIndexOf('/') + 1);
+console.log(`POST.json OK: post id ${id} for @${url.split('/')[3]} — copying to ${join(OUTPUT_DIR, 'POST.json')}`);
+writeFileSync(join(OUTPUT_DIR, 'POST.json'), raw);
